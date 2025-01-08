@@ -18,11 +18,13 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   late AnimationController _winAnimationController;
   List<List<AnimationController>> tileControllers = [];
   bool _showUndo = false;
+  final FocusNode _focusNode = FocusNode();
+  Offset? _panStartPosition;
 
   @override
   void initState() {
     super.initState();
-    
+
     // Initialize gameState first
     gameState = GameState(
       board: List.generate(4, (_) => List.generate(4, (_) => 0)),
@@ -43,9 +45,9 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
     tileControllers = List.generate(
       4,
-      (_) => List.generate(
+          (_) => List.generate(
         4,
-        (_) => AnimationController(
+            (_) => AnimationController(
           duration: const Duration(milliseconds: 200),
           vsync: this,
         ),
@@ -77,6 +79,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _controller.dispose();
     _winAnimationController.dispose();
     for (var row in tileControllers) {
@@ -103,6 +106,39 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     }
   }
 
+  void handlePanStart(DragStartDetails details) {
+    _panStartPosition = details.localPosition;
+  }
+
+  void handlePanEnd(DragEndDetails details) {
+    if (_panStartPosition == null || gameState.isGameOver) return;
+
+    final dx = details.velocity.pixelsPerSecond.dx;
+    final dy = details.velocity.pixelsPerSecond.dy;
+
+    // Lower the threshold for swipe detection
+    const swipeThreshold = 100.0;
+
+    if (dx.abs() > dy.abs()) {
+      if (dx.abs() > swipeThreshold) {
+        if (dx > 0) {
+          moveTiles(Direction.right);
+        } else {
+          moveTiles(Direction.left);
+        }
+      }
+    } else {
+      if (dy.abs() > swipeThreshold) {
+        if (dy > 0) {
+          moveTiles(Direction.down);
+        } else {
+          moveTiles(Direction.up);
+        }
+      }
+    }
+    _panStartPosition = null;
+  }
+
   Future<void> moveTiles(Direction direction) async {
     if (_controller.isAnimating) return;
 
@@ -110,11 +146,6 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     _showUndo = true;
 
     bool moved = false;
-    List<List<int>> oldBoard = List.generate(
-      4,
-      (i) => List.generate(4, (j) => gameState.board[i][j]),
-    );
-
     List<List<int>> rotated = rotateBoard(gameState.board, direction);
 
     for (int i = 0; i < 4; i++) {
@@ -379,7 +410,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                   color: tileColor,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withAlpha(26), // Changed from withOpacity(0.1)
                       blurRadius: 3,
                       offset: const Offset(0, 2),
                     ),
@@ -423,25 +454,16 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return KeyboardListener(
-      focusNode: FocusNode(),
+    return Focus(
+      focusNode: _focusNode,
       autofocus: true,
-      onKeyEvent: handleKeyEvent,
+      onKeyEvent: (node, event) {
+        handleKeyEvent(event);
+        return KeyEventResult.handled;
+      },
       child: GestureDetector(
-        onVerticalDragUpdate: (details) {
-          if (details.delta.dy > 0) {
-            moveTiles(Direction.down);
-          } else {
-            moveTiles(Direction.up);
-          }
-        },
-        onHorizontalDragUpdate: (details) {
-          if (details.delta.dx > 0) {
-            moveTiles(Direction.right);
-          } else {
-            moveTiles(Direction.left);
-          }
-        },
+        onPanStart: handlePanStart,
+        onPanEnd: handlePanEnd,
         child: Scaffold(
           appBar: AppBar(title: const Text('2048')),
           body: SingleChildScrollView(
