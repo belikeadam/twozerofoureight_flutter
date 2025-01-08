@@ -1,9 +1,9 @@
 class VersionController {
-  static String Ver = "Ver 0.0.4";
+  static String Ver = "Ver 0.0.5";
   static int Build = 0;
   static String ApkRelease = "r1";
   static String EditedBy = "adam";
-  static String Date = "0812025 11:01AM";
+  static String Date = "0812025 11:11AM";
 //flutter run -d chrome --web-renderer html --web-browser-flag  "--disable-web-security"
 }
 

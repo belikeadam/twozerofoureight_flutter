@@ -20,6 +20,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   bool _showUndo = false;
   final FocusNode _focusNode = FocusNode();
   Offset? _panStartPosition;
+  DateTime? _panStartTime;
 
   @override
   void initState() {
@@ -108,35 +109,39 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   void handlePanStart(DragStartDetails details) {
     _panStartPosition = details.localPosition;
+    _panStartTime = DateTime.now();
   }
 
   void handlePanEnd(DragEndDetails details) {
-    if (_panStartPosition == null || gameState.isGameOver) return;
+    if (_panStartPosition == null || _panStartTime == null || gameState.isGameOver) return;
 
-    final dx = details.velocity.pixelsPerSecond.dx;
-    final dy = details.velocity.pixelsPerSecond.dy;
+    final dx = details.localPosition.dx - _panStartPosition!.dx;
+    final dy = details.localPosition.dy - _panStartPosition!.dy;
 
-    // Lower the threshold for swipe detection
-    const swipeThreshold = 100.0;
+    // Calculate swipe duration
+    final duration = DateTime.now().difference(_panStartTime!).inMilliseconds;
 
-    if (dx.abs() > dy.abs()) {
-      if (dx.abs() > swipeThreshold) {
-        if (dx > 0) {
-          moveTiles(Direction.right);
-        } else {
-          moveTiles(Direction.left);
-        }
+    // Lower threshold for slower swipes
+    final swipeThreshold = duration < 200 ? 10.0 : 30.0;
+
+    if (dx.abs() > dy.abs() && dx.abs() > swipeThreshold) {
+      // Horizontal swipe
+      if (dx > 0) {
+        moveTiles(Direction.right);
+      } else {
+        moveTiles(Direction.left);
       }
-    } else {
-      if (dy.abs() > swipeThreshold) {
-        if (dy > 0) {
-          moveTiles(Direction.down);
-        } else {
-          moveTiles(Direction.up);
-        }
+    } else if (dy.abs() > dx.abs() && dy.abs() > swipeThreshold) {
+      // Vertical swipe
+      if (dy > 0) {
+        moveTiles(Direction.down);
+      } else {
+        moveTiles(Direction.up);
       }
     }
+
     _panStartPosition = null;
+    _panStartTime = null;
   }
 
   Future<void> moveTiles(Direction direction) async {
@@ -454,16 +459,30 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
+    return RawKeyboardListener(
       focusNode: _focusNode,
       autofocus: true,
-      onKeyEvent: (node, event) {
-        handleKeyEvent(event);
-        return KeyEventResult.handled;
+      onKey: (RawKeyEvent event) {
+        if (event is RawKeyDownEvent && !gameState.isGameOver) {
+          if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+            moveTiles(Direction.up);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+            moveTiles(Direction.down);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            moveTiles(Direction.left);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+            moveTiles(Direction.right);
+          } else if (event.logicalKey == LogicalKeyboardKey.space) {
+            resetGame();
+          }
+        }
       },
       child: GestureDetector(
-        onPanStart: handlePanStart,
-        onPanEnd: handlePanEnd,
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: handlePanStart,
+        onHorizontalDragEnd: handlePanEnd,
+        onVerticalDragStart: handlePanStart,
+        onVerticalDragEnd: handlePanEnd,
         child: Scaffold(
           appBar: AppBar(title: const Text('2048')),
           body: SingleChildScrollView(
