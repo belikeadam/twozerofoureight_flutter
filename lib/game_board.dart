@@ -15,17 +15,32 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   late GameState gameState;
   final Random random = Random();
   late AnimationController _controller;
+  late AnimationController _winAnimationController;
   List<List<AnimationController>> tileControllers = [];
-  
+  bool _showUndo = false;
+
   @override
   void initState() {
     super.initState();
+    
+    // Initialize gameState first
+    gameState = GameState(
+      board: List.generate(4, (_) => List.generate(4, (_) => 0)),
+      score: 0,
+      highScore: 0,
+      isGameOver: false,
+    );
+
     _controller = AnimationController(
       duration: const Duration(milliseconds: 200),
       vsync: this,
     );
-    
-    // Initialize tile animation controllers
+
+    _winAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+
     tileControllers = List.generate(
       4,
       (_) => List.generate(
@@ -36,7 +51,14 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
         ),
       ),
     );
-    
+
+    // Load high score after initialization
+    GameState.loadHighScore().then((value) {
+      setState(() {
+        gameState.highScore = value;
+      });
+    });
+
     resetGame();
   }
 
@@ -45,7 +67,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       gameState = GameState(
         board: List.generate(4, (_) => List.generate(4, (_) => 0)),
         score: 0,
-        highScore: 0,
+        highScore: gameState.highScore, // Now this will work because gameState is initialized
         isGameOver: false,
       );
       addNewTile();
@@ -56,6 +78,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   @override
   void dispose() {
     _controller.dispose();
+    _winAnimationController.dispose();
     for (var row in tileControllers) {
       for (var controller in row) {
         controller.dispose();
@@ -83,14 +106,17 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   Future<void> moveTiles(Direction direction) async {
     if (_controller.isAnimating) return;
 
+    gameState.saveMoveState();
+    _showUndo = true;
+
     bool moved = false;
     List<List<int>> oldBoard = List.generate(
       4,
       (i) => List.generate(4, (j) => gameState.board[i][j]),
     );
-    
+
     List<List<int>> rotated = rotateBoard(gameState.board, direction);
-    
+
     for (int i = 0; i < 4; i++) {
       List<int> row = rotated[i].where((x) => x != 0).toList();
       for (int j = 0; j < row.length - 1; j++) {
@@ -113,20 +139,26 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
     if (moved) {
       _controller.forward(from: 0);
-      
+
       setState(() {
         gameState.board = rotateBoard(rotated, direction);
       });
 
       await _controller.forward(from: 0);
-      
+
       setState(() {
         addNewTile();
         if (gameState.score > gameState.highScore) {
           gameState.highScore = gameState.score;
+          gameState.saveHighScore();
         }
         checkGameOver();
       });
+
+      if (!gameState.hasWon && gameState.board.any((row) => row.contains(2048))) {
+        gameState.hasWon = true;
+        _winAnimationController.forward();
+      }
     }
   }
 
@@ -147,7 +179,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   List<List<int>> rotateBoard(List<List<int>> board, Direction direction) {
     List<List<int>> rotated = List.generate(4, (_) => List.generate(4, (_) => 0));
-    
+
     switch (direction) {
       case Direction.up:
         for (int i = 0; i < 4; i++) {
@@ -159,7 +191,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       case Direction.down:
         for (int i = 0; i < 4; i++) {
           for (int j = 0; j < 4; j++) {
-            rotated[i][j] = board[3-i][j];
+            rotated[i][j] = board[3 - i][j];
           }
         }
         break;
@@ -173,7 +205,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       case Direction.right:
         for (int i = 0; i < 4; i++) {
           for (int j = 0; j < 4; j++) {
-            rotated[i][j] = board[j][3-i];
+            rotated[i][j] = board[j][3 - i];
           }
         }
         break;
@@ -182,14 +214,12 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   }
 
   bool checkGameOver() {
-    // Check for any empty cells
     for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 4; j++) {
         if (gameState.board[i][j] == 0) return false;
       }
     }
-    
-    // Check for possible merges
+
     for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 3; j++) {
         if (gameState.board[i][j] == gameState.board[i][j + 1] ||
@@ -198,9 +228,104 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
         }
       }
     }
-    
+
     gameState.isGameOver = true;
     return true;
+  }
+
+  Widget buildScoreBoard() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            children: [
+              Text('SCORE', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Text('${gameState.score}', style: TextStyle(fontSize: 24)),
+            ],
+          ),
+          Column(
+            children: [
+              Text('BEST', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Text('${gameState.highScore}', style: TextStyle(fontSize: 24)),
+            ],
+          ),
+          Row(
+            children: [
+              if (_showUndo)
+                IconButton(
+                  icon: Icon(Icons.undo),
+                  onPressed: () {
+                    setState(() {
+                      if (gameState.undoLastMove()) {
+                        _showUndo = false;
+                      }
+                    });
+                  },
+                ),
+              ElevatedButton(
+                onPressed: resetGame,
+                child: Text('New Game'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildGameOverOverlay() {
+    if (!gameState.isGameOver) return Container();
+
+    return Container(
+      color: Colors.black54,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Game Over!',
+              style: TextStyle(color: Colors.white, fontSize: 32),
+            ),
+            ElevatedButton(
+              onPressed: resetGame,
+              child: Text('Try Again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildWinOverlay() {
+    if (!gameState.hasWon) return Container();
+
+    return ScaleTransition(
+      scale: _winAnimationController,
+      child: Container(
+        color: Colors.black54,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'You Win!',
+                style: TextStyle(color: Colors.white, fontSize: 32),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    gameState.hasWon = false;
+                  });
+                },
+                child: Text('Keep Playing'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget buildGrid() {
@@ -319,11 +444,37 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
         },
         child: Scaffold(
           appBar: AppBar(title: const Text('2048')),
-          body: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              buildGrid(),
-            ],
+          body: SingleChildScrollView(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 400,
+                  maxHeight: MediaQuery.of(context).size.height - kToolbarHeight - 32,
+                ),
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  child: SizedBox(
+                    width: 400,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        buildScoreBoard(),
+                        AspectRatio(
+                          aspectRatio: 1,
+                          child: Stack(
+                            children: [
+                              buildGrid(),
+                              buildGameOverOverlay(),
+                              buildWinOverlay(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
