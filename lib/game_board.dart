@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math';
-import 'package:flutter/foundation.dart'; // Add this import
+import 'package:flutter/foundation.dart';
 import 'game_state.dart';
 
 class GameBoard extends StatefulWidget {
@@ -11,25 +11,61 @@ class GameBoard extends StatefulWidget {
   _GameBoardState createState() => _GameBoardState();
 }
 
-class _GameBoardState extends State<GameBoard> {
+class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   late GameState gameState;
   final Random random = Random();
-
+  late AnimationController _controller;
+  List<List<AnimationController>> tileControllers = [];
+  
   @override
   void initState() {
     super.initState();
-    gameState = GameState(
-      board: List.generate(4, (_) => List.generate(4, (_) => 0)),
-      score: 0,
-      highScore: 0,
-      isGameOver: false,
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
     );
-    addNewTile();
-    addNewTile();
+    
+    // Initialize tile animation controllers
+    tileControllers = List.generate(
+      4,
+      (_) => List.generate(
+        4,
+        (_) => AnimationController(
+          duration: const Duration(milliseconds: 200),
+          vsync: this,
+        ),
+      ),
+    );
+    
+    resetGame();
+  }
+
+  void resetGame() {
+    setState(() {
+      gameState = GameState(
+        board: List.generate(4, (_) => List.generate(4, (_) => 0)),
+        score: 0,
+        highScore: 0,
+        isGameOver: false,
+      );
+      addNewTile();
+      addNewTile();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    for (var row in tileControllers) {
+      for (var controller in row) {
+        controller.dispose();
+      }
+    }
+    super.dispose();
   }
 
   void handleKeyEvent(KeyEvent event) {
-    if (event is KeyDownEvent) {
+    if (event is KeyDownEvent && !gameState.isGameOver) {
       if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
         moveTiles(Direction.up);
       } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
@@ -38,7 +74,59 @@ class _GameBoardState extends State<GameBoard> {
         moveTiles(Direction.left);
       } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
         moveTiles(Direction.right);
+      } else if (event.logicalKey == LogicalKeyboardKey.space) {
+        resetGame();
       }
+    }
+  }
+
+  Future<void> moveTiles(Direction direction) async {
+    if (_controller.isAnimating) return;
+
+    bool moved = false;
+    List<List<int>> oldBoard = List.generate(
+      4,
+      (i) => List.generate(4, (j) => gameState.board[i][j]),
+    );
+    
+    List<List<int>> rotated = rotateBoard(gameState.board, direction);
+    
+    for (int i = 0; i < 4; i++) {
+      List<int> row = rotated[i].where((x) => x != 0).toList();
+      for (int j = 0; j < row.length - 1; j++) {
+        if (row[j] == row[j + 1]) {
+          row[j] *= 2;
+          gameState.score += row[j];
+          row[j + 1] = 0;
+          moved = true;
+        }
+      }
+      row = row.where((x) => x != 0).toList();
+      while (row.length < 4) {
+        row.add(0);
+      }
+      if (!listEquals(rotated[i], row)) {
+        moved = true;
+      }
+      rotated[i] = row;
+    }
+
+    if (moved) {
+      _controller.forward(from: 0);
+      
+      setState(() {
+        gameState.board = rotateBoard(rotated, direction);
+      });
+
+      await _controller.forward(from: 0);
+      
+      setState(() {
+        addNewTile();
+        if (gameState.score > gameState.highScore) {
+          gameState.highScore = gameState.score;
+        }
+        checkGameOver();
+      });
     }
   }
 
@@ -93,41 +181,6 @@ class _GameBoardState extends State<GameBoard> {
     return rotated;
   }
 
-  void moveTiles(Direction direction) {
-    bool moved = false;
-    List<List<int>> rotated = rotateBoard(gameState.board, direction);
-    
-    for (int i = 0; i < 4; i++) {
-      List<int> row = rotated[i].where((x) => x != 0).toList();
-      for (int j = 0; j < row.length - 1; j++) {
-        if (row[j] == row[j + 1]) {
-          row[j] *= 2;
-          gameState.score += row[j];
-          row[j + 1] = 0;
-          moved = true;
-        }
-      }
-      row = row.where((x) => x != 0).toList();
-      while (row.length < 4) {
-        row.add(0);
-      }
-      if (!listEquals(rotated[i], row)) {
-        moved = true;
-      }
-      rotated[i] = row;
-    }
-
-    if (moved) {
-      gameState.board = rotateBoard(rotated, direction);
-      addNewTile();
-      if (gameState.score > gameState.highScore) {
-        gameState.highScore = gameState.score;
-      }
-      checkGameOver();
-      setState(() {});
-    }
-  }
-
   bool checkGameOver() {
     // Check for any empty cells
     for (int i = 0; i < 4; i++) {
@@ -173,7 +226,7 @@ class _GameBoardState extends State<GameBoard> {
               int row = index ~/ 4;
               int col = index % 4;
               int value = gameState.board[row][col];
-              return buildTile(value);
+              return buildTile(value, row, col);
             },
           ),
         ),
@@ -181,25 +234,48 @@ class _GameBoardState extends State<GameBoard> {
     );
   }
 
-  Widget buildTile(int value) {
+  Widget buildTile(int value, int row, int col) {
     final Color tileColor = getTileColor(value);
     final Color textColor = value <= 4 ? Colors.grey[900]! : Colors.white;
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(3.0),
-        color: tileColor,
-      ),
-      child: Center(
-        child: Text(
-          value > 0 ? value.toString() : '',
-          style: TextStyle(
-            fontSize: 24.0,
-            fontWeight: FontWeight.bold,
-            color: textColor,
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return TweenAnimationBuilder(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          tween: Tween<double>(begin: 0, end: 1),
+          builder: (context, double value, Widget? child) {
+            return Transform.scale(
+              scale: value,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8.0),
+                  color: tileColor,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 3,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: child,
+              ),
+            );
+          },
+          child: Center(
+            child: Text(
+              value > 0 ? value.toString() : '',
+              style: TextStyle(
+                fontSize: value > 512 ? 20.0 : 24.0,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
