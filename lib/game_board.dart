@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:math';
+import 'dart:math' show Point, Random, sqrt;
 import 'package:flutter/foundation.dart';
 import 'game_state.dart';
 
@@ -20,7 +20,10 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   bool _showUndo = false;
   final FocusNode _focusNode = FocusNode();
   Offset? _panStartPosition;
+  Offset? _lastUpdatePosition;
   DateTime? _panStartTime;
+  final double _minSwipeDistance = 10.0;
+  final double _minSwipeVelocity = 200.0;
 
   @override
   void initState() {
@@ -109,29 +112,35 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   void handlePanStart(DragStartDetails details) {
     _panStartPosition = details.localPosition;
+    _lastUpdatePosition = details.localPosition;
     _panStartTime = DateTime.now();
   }
 
+  void handlePanUpdate(DragUpdateDetails details) {
+    _lastUpdatePosition = details.localPosition;
+  }
+
   void handlePanEnd(DragEndDetails details) {
-    if (_panStartPosition == null || _panStartTime == null || gameState.isGameOver) return;
+    if (_panStartPosition == null || _lastUpdatePosition == null ||
+        _panStartTime == null || gameState.isGameOver) return;
 
-    final dx = details.localPosition.dx - _panStartPosition!.dx;
-    final dy = details.localPosition.dy - _panStartPosition!.dy;
+    final dx = _lastUpdatePosition!.dx - _panStartPosition!.dx;
+    final dy = _lastUpdatePosition!.dy - _panStartPosition!.dy;
+    final distance = sqrt(dx * dx + dy * dy);
 
-    // Calculate swipe duration
     final duration = DateTime.now().difference(_panStartTime!).inMilliseconds;
+    final velocity = distance / (duration / 1000); // pixels per second
 
-    // Lower threshold for slower swipes
-    final swipeThreshold = duration < 200 ? 10.0 : 30.0;
+    if (distance < _minSwipeDistance || velocity < _minSwipeVelocity) return;
 
-    if (dx.abs() > dy.abs() && dx.abs() > swipeThreshold) {
+    if (dx.abs() > dy.abs()) {
       // Horizontal swipe
       if (dx > 0) {
         moveTiles(Direction.right);
       } else {
         moveTiles(Direction.left);
       }
-    } else if (dy.abs() > dx.abs() && dy.abs() > swipeThreshold) {
+    } else {
       // Vertical swipe
       if (dy > 0) {
         moveTiles(Direction.down);
@@ -141,6 +150,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     }
 
     _panStartPosition = null;
+    _lastUpdatePosition = null;
     _panStartTime = null;
   }
 
@@ -459,11 +469,11 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return RawKeyboardListener(
+    return Focus(
       focusNode: _focusNode,
       autofocus: true,
-      onKey: (RawKeyEvent event) {
-        if (event is RawKeyDownEvent && !gameState.isGameOver) {
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent && !gameState.isGameOver) {
           if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
             moveTiles(Direction.up);
           } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
@@ -476,12 +486,15 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
             resetGame();
           }
         }
+        return KeyEventResult.handled;
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onHorizontalDragStart: handlePanStart,
+        onHorizontalDragUpdate: handlePanUpdate,
         onHorizontalDragEnd: handlePanEnd,
         onVerticalDragStart: handlePanStart,
+        onVerticalDragUpdate: handlePanUpdate,
         onVerticalDragEnd: handlePanEnd,
         child: Scaffold(
           appBar: AppBar(title: const Text('2048')),
